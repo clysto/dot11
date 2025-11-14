@@ -1,6 +1,7 @@
 import math
 from collections import deque
 
+import scipy.signal
 import numpy as np
 from viterbi import Viterbi as FastViterbi
 
@@ -60,6 +61,16 @@ PILOT_SEQ = np.concat(
 
 def hamming_distance(l1, l2):
     return sum(1 for a, b in zip(l1, l2) if a != b and a != -1 and b != -1)
+
+
+def power_detector(sig, window_len, threshoud):
+    sig = np.pad(sig, (window_len, 0), mode="symmetric")
+    sig = np.abs(sig)
+    a = np.convolve(sig[:-window_len], np.ones(window_len), "valid")
+    b = np.convolve(sig[window_len:], np.ones(window_len), "valid")
+    p = 10 * np.log10(b / a)
+    idx, _ = scipy.signal.find_peaks(p, height=threshoud, width=window_len)
+    return idx
 
 
 class Viterbi:
@@ -409,6 +420,12 @@ class ChannelEstimator:
 class Decoder:
     def __init__(self, samples):
         self._buffer = SampleBuffer(samples)
+        self._pkt_idx = power_detector(samples, 48, 5)
+
+    def decode_next(self):
+        for i in self._pkt_idx:
+            self._buffer._pos = i
+            yield self.decode()
 
     def descramble(self, bits):
         x = [0] * 7

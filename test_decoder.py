@@ -14,23 +14,28 @@ def awgn(samples, snr):
     return samples + noise
 
 
+def channel(sig, time_offset, theta, snr, freq_offset):
+    # add time offset
+    samples = np.concat((np.zeros(time_offset, dtype=np.complex64), sig))
+    # add phase rotation
+    samples *= np.exp(1j * theta)
+    # add noise
+    samples = awgn(samples, snr)
+    # add frequency offset
+    samples *= np.exp(1j * 2 * np.pi * freq_offset * (np.arange(len(samples)) / 20e6))
+    return samples
+
+
 def run_decoder(variant, mcs):
     mat = scipy.io.loadmat(f"data/80211{variant}-mcs{mcs}.mat", squeeze_me=True)
     samples = mat["waveStruct"]["waveform"].item().astype(np.complex64)
 
-    # add time offset
-    offset = np.random.randint(0, 15)
-    samples = np.concat((np.zeros(offset, dtype=np.complex64), samples))
-
-    # add phase rotation
+    time_offset = np.random.randint(0, 15)
     theta = np.random.uniform(0, 2 * np.pi)
-    samples *= np.exp(1j * theta)
+    snr = 30
+    freq_offset = 50e3
 
-    # add noise
-    samples = awgn(samples, 30)
-
-    # add frequency offset
-    samples *= np.exp(1j * 2 * np.pi * 50e3 * (np.arange(len(samples)) / 20e6))
+    samples = channel(samples, time_offset, theta, snr, freq_offset)
 
     decoder = Decoder(samples)
     return decoder.decode()
@@ -41,3 +46,27 @@ def run_decoder(variant, mcs):
 def test_decoder(variant, mcs):
     psdu = run_decoder(variant, mcs)
     assert not any(psdu)
+
+
+def test_continues_decode():
+    mat = scipy.io.loadmat("data/80211n-mcs0.mat", squeeze_me=True)
+    samples = mat["waveStruct"]["waveform"].item().astype(np.complex64)
+    sig = np.concat(
+        (
+            np.zeros(3000, dtype=np.complex64),
+            samples,
+            np.zeros(3000, dtype=np.complex64),
+        )
+    )
+    sig = np.tile(sig, 16)
+
+    theta = np.random.uniform(0, 2 * np.pi)
+    snr = 15
+    freq_offset = 50e3
+
+    sig = channel(sig, 0, theta, snr, freq_offset)
+
+    decoder = Decoder(sig)
+
+    for psdu in decoder.decode_next():
+        assert not any(psdu)

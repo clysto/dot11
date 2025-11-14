@@ -305,25 +305,29 @@ class Demodulator:
 
 
 class SampleBuffer:
-    def __init__(self, samples):
+    def __init__(self, samples: np.ndarray):
         self._samples = samples
         self._pos = 0
+        self._cfo = 0
 
     def read(self, count):
-        ret = self._samples[self._pos : self._pos + count]
+        ret = self._samples[self._pos : self._pos + count].copy()
+        ret *= np.exp(2j * np.pi * self._cfo * ((np.arange(len(ret)) + self._pos) / FS))
         if len(ret) == 0:
             raise Exception("Reached end of sample buffer.")
         self._pos += len(ret)
         return ret
 
     def window(self, offset, length):
-        return self._samples[self._pos + offset : self._pos + offset + length]
+        ret = self._samples[self._pos + offset : self._pos + offset + length].copy()
+        ret *= np.exp(2j * np.pi * self._cfo * ((np.arange(len(ret)) + self._pos + offset) / FS))
+        return ret
 
     def advance(self, count):
         self._pos += count
 
     def freq_compensation(self, cfo):
-        self._samples *= np.exp(1j * 2 * np.pi * cfo * (np.arange(len(self._samples)) / FS))
+        self._cfo += cfo
 
 
 class ChannelEstimator:
@@ -424,7 +428,19 @@ class Decoder:
 
         return out_bits
 
+    def time_sync(self):
+        samples = self._buffer.window(0, 350)
+        corr = np.abs(np.correlate(samples, LTS_T, mode="valid"))
+        peaks = np.argsort(corr)[-2:]
+        peak1 = min(peaks)
+        peak2 = max(peaks)
+        if peak2 - peak1 != 64 or peak1 - 32 - 160 < 0:
+            raise Exception("Time sync failed.")
+        self._buffer.advance(peak1 - 32 - 160)
+
     def decode(self):
+        self.time_sync()
+
         estimator = ChannelEstimator(self._buffer)
 
         # Decode one OFDM symbol for Legacy Signal

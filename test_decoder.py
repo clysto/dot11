@@ -18,7 +18,18 @@ def run_decoder(variant, mcs):
     mat = scipy.io.loadmat(f"data/80211{variant}-mcs{mcs}.mat", squeeze_me=True)
     samples = mat["waveStruct"]["waveform"].item().astype(np.complex64)
 
+    # add time offset
+    offset = np.random.randint(0, 15)
+    samples = np.concat((np.zeros(offset, dtype=np.complex64), samples))
+
+    # add phase rotation
+    theta = np.random.uniform(0, 2 * np.pi)
+    samples *= np.exp(1j * theta)
+
+    # add noise
     samples = awgn(samples, 30)
+
+    # add frequency offset
     samples *= np.exp(1j * 2 * np.pi * 50e3 * (np.arange(len(samples)) / 20e6))
 
     decoder = Decoder(samples)

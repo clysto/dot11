@@ -59,6 +59,7 @@ PILOT_SEQ = np.concat(
     ]
 )
 
+
 def power_detector(sig, window_len, threshoud):
     sig = np.pad(sig, (window_len, 0), mode="symmetric")
     sig = np.abs(sig)
@@ -361,10 +362,17 @@ class Decoder:
         self._buffer = SampleBuffer(samples)
         self._pkt_idx = power_detector(samples, 48, 5)
 
-    def decode_next(self):
+    def decode_next(self, return_pos=False):
         for i in self._pkt_idx:
             self._buffer._pos = i
-            yield self.decode()
+            try:
+                if return_pos:
+                    yield i, self.decode()
+                else:
+                    yield self.decode()
+
+            except Exception:
+                continue
 
     def descramble(self, bits):
         x = [0] * 7

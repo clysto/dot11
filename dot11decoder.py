@@ -351,6 +351,8 @@ class Decoder:
     def __init__(self, samples):
         self._buffer = SampleBuffer(samples)
 
+    def find_packets(self):
+        samples = self._buffer._samples
         # Find packets in samples using correlation
         corr = samples[:-16] * np.conj(samples[16:])
         power = samples[:-16] * np.conj(samples[:-16])
@@ -359,10 +361,10 @@ class Decoder:
         decisions = np.abs(corr) > np.abs(power * 0.8)
         # Identify long, continuous correlation plateaus that indicate the start of an STS
         idx, _ = scipy.signal.find_peaks(decisions, height=1, plateau_size=128)
-        self._pkt_idx = idx
+        return idx
 
     def decode_next(self, return_pos=False):
-        for i in self._pkt_idx:
+        for i in self.find_packets():
             self._buffer._cfo = 0
             self._buffer._pos = i
             try:

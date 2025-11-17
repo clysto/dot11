@@ -213,6 +213,12 @@ class HTSignal:
         "1110000": (6, 312, 260, [1, 1, 1, 0, 0, 1, 1, 0, 0, 1]),  # 65.0 Mbps (64QAM, 5/6)
     }
 
+    class HTSignalCRCError(Exception):
+        def __init__(self, expected: str, got: str):
+            super().__init__(f"HTSignal CRC check failed: expected {expected}, got {got}")
+            self.expected = expected
+            self.got = got
+
     def __init__(self, bits):
         assert len(bits) == 48
         str_bits = "".join([str(b) for b in bits])
@@ -234,7 +240,7 @@ class HTSignal:
 
         expected_crc = "".join(["%d" % c for c in self.calc_crc(bits[:34])])
         if expected_crc != self.crc:
-            raise ValueError(f"HTSignal CRC check failed: expected {expected_crc}, got {self.crc}")
+            raise HTSignal.HTSignalCRCError(expected_crc, self.crc)
         self.check()
 
         self.mcs = self.HT_MCS_PARAMETERS[self.mcs_bits]
@@ -521,7 +527,7 @@ class Decoder:
         try:
             signal = HTSignal(ht_signal_bits)
             estimator.switch_ht(signal)
-        except Exception:
+        except HTSignal.HTSignalCRCError:
             # Not a 802.11n packets rollback
             self._buffer.advance(-160)
             estimator._pilot_seq.rotate(2)

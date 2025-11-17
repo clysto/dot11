@@ -60,16 +60,6 @@ PILOT_SEQ = np.concat(
 )
 
 
-def power_detector(sig, window_len, threshoud):
-    sig = np.pad(sig, (window_len, 0), mode="symmetric")
-    sig = np.abs(sig)
-    a = np.convolve(sig[:-window_len], np.ones(window_len), "valid")
-    b = np.convolve(sig[window_len:], np.ones(window_len), "valid")
-    p = 10 * np.log10(b / a)
-    idx, _ = scipy.signal.find_peaks(p, height=threshoud, width=window_len)
-    return idx
-
-
 class LegacySignal:
     # n_bpsc, n_cbps, n_dbps, puncpat 802.11a/g
     LT_MCS_PARAMETERS = {
@@ -360,10 +350,20 @@ class ChannelEstimator:
 class Decoder:
     def __init__(self, samples):
         self._buffer = SampleBuffer(samples)
-        self._pkt_idx = power_detector(samples, 48, 5)
+
+        # Find packets in samples using correlation
+        corr = samples[:-16] * np.conj(samples[16:])
+        power = samples[:-16] * np.conj(samples[:-16])
+        corr = np.convolve(corr, np.ones(48), mode="valid")
+        power = np.convolve(power, np.ones(48), mode="valid")
+        decisions = np.abs(corr) > np.abs(power * 0.8)
+        # Identify long, continuous correlation plateaus that indicate the start of an STS
+        idx, _ = scipy.signal.find_peaks(decisions, height=1, plateau_size=128)
+        self._pkt_idx = idx
 
     def decode_next(self, return_pos=False):
         for i in self._pkt_idx:
+            self._buffer._cfo = 0
             self._buffer._pos = i
             try:
                 if return_pos:
@@ -393,12 +393,12 @@ class Decoder:
         return out_bits
 
     def time_sync(self):
-        samples = self._buffer.window(0, 350)
+        samples = self._buffer.window(0, 400)
         corr = np.abs(np.correlate(samples, LTS_T, mode="valid"))
         peaks = np.argsort(corr)[-2:]
         peak1 = min(peaks)
         peak2 = max(peaks)
-        if peak2 - peak1 != 64 or peak1 - 32 - 160 < 0:
+        if peak2 - peak1 != 64:
             raise Exception("Time sync failed.")
         self._buffer.advance(peak1 - 32 - 160)
 

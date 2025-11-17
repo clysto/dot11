@@ -26,6 +26,23 @@ def hamming_distance(l1: BitList, l2: BitList) -> cython.int:
     return dist
 
 
+@cython.cfunc
+@cython.inline
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def soft_distance(code_bits: BitList, llrs: List[float]) -> cython.double:
+    limit: cython.Py_ssize_t = min(len(code_bits), len(llrs))
+    dist: cython.double = 0.0
+    idx: cython.Py_ssize_t
+
+    for idx in range(limit):
+        llr: cython.double = llrs[idx]
+        contrib: cython.double = -llr if code_bits[idx] else llr
+        dist += contrib
+
+    return dist
+
+
 class Viterbi:
     _constraint: cython.int
     _polynomials: BitList
@@ -56,11 +73,11 @@ class Viterbi:
         puncpat_len: cython.int = len(self._puncpat)
         return [bit for i, bit in enumerate(bits) if self._puncpat[i % puncpat_len] == 1]
 
-    def _depuncture(self, bits: BitList) -> BitList:
+    def _depuncture(self, bits: BitList, b_erase: cython.double = -1.0) -> list:
         if self._puncpat is None:
             return bits
 
-        depunctured: BitList = []
+        depunctured: list = []
         it = iter(bits)
         while True:
             for flag in self._puncpat:
@@ -70,7 +87,7 @@ class Viterbi:
                     except StopIteration:
                         return depunctured
                 else:
-                    depunctured.append(-1)
+                    depunctured.append(b_erase)
 
     def encode(self, bits: Iterable[int]) -> BitList:
         output: BitList = []
@@ -86,9 +103,12 @@ class Viterbi:
         else:
             return output
 
-    def decode(self, bits: Sequence[int]) -> BitList:
+    def decode(self, bits: Sequence, soft: bool = False) -> BitList:
+        b_erase: cython.double = 0.0 if soft else -1.0
+        is_soft: cython.bint = soft
+
         if self._puncpat is not None:
-            bits = self._depuncture(list(bits))
+            bits = self._depuncture(list(bits), b_erase=b_erase)
         else:
             bits = list(bits)
 
@@ -107,8 +127,8 @@ class Viterbi:
             cur_bits = bits[start:stop]
 
             if len(cur_bits) < self._n_parity_bits:
-                # pad -1 for missing parity bits
-                cur_bits += [-1] * (self._n_parity_bits - len(cur_bits))
+                # pad erase bits
+                cur_bits += [b_erase] * (self._n_parity_bits - len(cur_bits))
 
             cur: cython.int
             mask: cython.int = (1 << (self._constraint - 1)) - 1
@@ -117,8 +137,12 @@ class Viterbi:
                 prev1: cython.int = (cur << 1) | 0
                 prev2: cython.int = (cur << 1) | 1
 
-                pm1 = hamming_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
-                pm2 = hamming_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
+                if is_soft:
+                    pm1 = soft_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
+                    pm2 = soft_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
+                else:
+                    pm1 = hamming_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
+                    pm2 = hamming_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
 
                 if pm1 < pm2:
                     trellis[step].append(prev1 & mask)

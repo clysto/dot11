@@ -70,3 +70,29 @@ def test_continues_decode():
 
     for psdu in decoder.decode_next():
         assert not any(psdu)
+
+
+HT_MCS_MIN_SNR = {
+    0: 6,
+    1: 6,
+    2: 9,
+    3: 11,
+    4: 15,
+    5: 18,
+    6: 20,
+    7: 25,
+}
+
+
+@pytest.mark.parametrize("mcs", sorted(HT_MCS_MIN_SNR.keys()), ids=lambda m: f"HT-MCS{m}")
+def test_decoder_minimum_snr_per_mcs(mcs):
+    mat = scipy.io.loadmat(f"data/80211a-mcs{mcs}.mat", squeeze_me=True)
+    samples = mat["waveStruct"]["waveform"].item().astype(np.complex64)
+
+    snr = HT_MCS_MIN_SNR[mcs]
+    noisy_samples = awgn(samples, snr)
+
+    decoder = Decoder(noisy_samples)
+    psdu = decoder.decode()
+
+    assert not any(psdu)

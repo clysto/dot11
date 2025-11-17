@@ -63,6 +63,10 @@ def hamming_distance(l1, l2):
     return sum(1 for a, b in zip(l1, l2) if a != b and a != -1 and b != -1)
 
 
+def soft_distance(code_bits, llrs):
+    return sum((-llr if b else llr) for b, llr in zip(code_bits, llrs))
+
+
 def power_detector(sig, window_len, threshoud):
     sig = np.pad(sig, (window_len, 0), mode="symmetric")
     sig = np.abs(sig)
@@ -89,7 +93,7 @@ class Viterbi:
         puncpat_len = len(self._puncpat)
         return [bit for i, bit in enumerate(bits) if self._puncpat[i % puncpat_len]]
 
-    def _depuncture(self, bits):
+    def _depuncture(self, bits, b_erase=-1):
         depunctured = []
         it = iter(bits)
         while True:
@@ -100,7 +104,7 @@ class Viterbi:
                     except StopIteration:
                         return depunctured
                 else:
-                    depunctured.append(-1)
+                    depunctured.append(b_erase)
 
     def encode(self, bits):
         output = []
@@ -114,9 +118,11 @@ class Viterbi:
         else:
             return output
 
-    def decode(self, bits):
+    def decode(self, bits, soft=True):
+        b_erase = 0 if soft else -1
+
         if self._puncpat is not None:
-            bits = self._depuncture(bits)
+            bits = self._depuncture(bits, b_erase)
 
         trellis: list[list] = []
         path_metrics = [0 if i == 0 else math.inf for i in range(1 << (self._constraint - 1))]
@@ -127,8 +133,8 @@ class Viterbi:
 
             cur_bits = bits[i * self._n_parity_bits : (i + 1) * self._n_parity_bits]
             if len(cur_bits) < self._n_parity_bits:
-                # pad -1
-                cur_bits += [-1] * (self._n_parity_bits - len(cur_bits))
+                # pad erase bits
+                cur_bits += [b_erase] * (self._n_parity_bits - len(cur_bits))
 
             for cur in range(1 << (self._constraint - 1)):
                 mask = (1 << (self._constraint - 1)) - 1
@@ -136,8 +142,12 @@ class Viterbi:
                 prev1 = (cur << 1) | 0
                 prev2 = (cur << 1) | 1
 
-                pm1 = hamming_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
-                pm2 = hamming_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
+                if soft:
+                    pm1 = soft_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
+                    pm2 = soft_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
+                else:
+                    pm1 = hamming_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
+                    pm2 = hamming_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
 
                 if pm1 < pm2:
                     trellis[i].append(prev1 & mask)
@@ -306,13 +316,33 @@ class Demodulator:
         else:
             raise ValueError(f"Unsupported n_bpsc={n_bpsc}. Expected one of {1, 2, 4, 6}.")
 
-    def demodulate(self, carriers: np.ndarray) -> list[int]:
-        bits = []
+        # Precompute bit labels for each constellation index
+        m = len(self.cons_points)
+        self.bit_labels = np.zeros((m, self.bits_per_sym), dtype=int)
+        for i in range(m):
+            bitstr = f"{i:0{self.bits_per_sym}b}"
+            self.bit_labels[i, :] = [int(b) for b in bitstr]
+
+    def demodulate(self, carriers: np.ndarray, return_soft: bool = False):
+        if not return_soft:
+            bits: list[int] = []
+            for sym in carriers:
+                idx = int(np.argmin(np.abs(sym * self.scale - self.cons_points)))
+                bits.extend(self.bit_labels[idx])
+            return bits
+
+        # Soft mode
+        llrs: list[float] = []
         for sym in carriers:
-            idx = np.argmin(np.abs(sym * self.scale - self.cons_points))
-            bitstr = f"{idx:0{self.bits_per_sym}b}"
-            bits.extend(map(int, bitstr))
-        return bits
+            z = sym * self.scale
+            d2 = np.abs(z - self.cons_points) ** 2
+            for bpos in range(self.bits_per_sym):
+                mask0 = self.bit_labels[:, bpos] == 0
+                mask1 = ~mask0
+                d0 = float(np.min(d2[mask0]))
+                d1 = float(np.min(d2[mask1]))
+                llrs.append(d0 - d1)
+        return llrs
 
 
 class SampleBuffer:
@@ -455,7 +485,7 @@ class Decoder:
             raise Exception("Time sync failed.")
         self._buffer.advance(peak1 - 32 - 160)
 
-    def decode(self):
+    def decode(self, soft=True):
         self.time_sync()
 
         estimator = ChannelEstimator(self._buffer)
@@ -466,9 +496,9 @@ class Decoder:
         dot11_codec = FastViterbi(7, [0o133, 0o171])
 
         signal_sym = estimator.next_symbol()
-        signal_raw_bits = demod.demodulate(signal_sym)
+        signal_raw_bits = demod.demodulate(signal_sym, return_soft=soft)
         signal_coded_bits = deintl.deinterleave(signal_raw_bits)
-        signal_bits = dot11_codec.decode(signal_coded_bits)
+        signal_bits = dot11_codec.decode(signal_coded_bits, soft=soft)
 
         signal = LegacySignal(signal_bits)
 
@@ -479,10 +509,10 @@ class Decoder:
             ht_signal_sym = estimator.next_symbol()
             # LT Signal using QBPSK rotate back
             ht_signal_sym *= -1j
-            ht_signal_raw_bits.extend(demod.demodulate(ht_signal_sym))
+            ht_signal_raw_bits.extend(demod.demodulate(ht_signal_sym, return_soft=soft))
 
         ht_signal_coded_bits = deintl.deinterleave(ht_signal_raw_bits)
-        ht_signal_bits = dot11_codec.decode(ht_signal_coded_bits)
+        ht_signal_bits = dot11_codec.decode(ht_signal_coded_bits, soft=soft)
 
         try:
             signal = HTSignal(ht_signal_bits)
@@ -507,10 +537,10 @@ class Decoder:
 
         for _ in range(n_sym):
             data_sym = estimator.next_symbol()
-            data_raw_bits.extend(demod.demodulate(data_sym))
+            data_raw_bits.extend(demod.demodulate(data_sym, return_soft=soft))
 
         data_coded_bits = deintl.deinterleave(data_raw_bits)
-        data_bits = dot11_codec.decode(data_coded_bits)
+        data_bits = dot11_codec.decode(data_coded_bits, soft=soft)
         data_bits = self.descramble(data_bits)
         data_bytes = np.packbits(data_bits[n_service:], bitorder="little")[:n_bytes].tobytes()
 

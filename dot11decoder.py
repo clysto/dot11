@@ -24,6 +24,7 @@ STS_LEN = 16
 HT_STS_LEN = 80
 HT_LTS_LEN = 64
 CP_LEN = 16
+CP_LEN_SHORT = 8
 
 
 DATA_IND = np.hstack(
@@ -224,7 +225,7 @@ class HTSignal:
         self.aggregation = str_bits[27]
         self.stbc = str_bits[28:30]
         self.fec = str_bits[30]
-        self.short_gi = str_bits[31]
+        self.short_gi = True if str_bits[31] == "1" else False
         self.num_ext_stream = str_bits[32:34]
         self.crc = str_bits[34:42]
         self.tail_bits = str_bits[42:48]
@@ -377,6 +378,7 @@ class ChannelEstimator:
         self._pilot_seq = deque(PILOT_SEQ)
         self._pilot_polarity = deque([1, 1, 1, -1])
         self._ht = False
+        self._short_gi = False
 
         # Estimate CFO using STS
         coarse_cfo_est = self._coarse_cfo_estimate()
@@ -405,8 +407,9 @@ class ChannelEstimator:
         self._h_est = (h1 + h2) / 2
 
     def next_symbol(self):
-        sym = self._buffer.read(CP_LEN + 64)
-        sym = np.fft.fftshift(np.fft.fft(sym[CP_LEN:])) * self._h_est
+        n_gi = CP_LEN_SHORT if self._short_gi else CP_LEN
+        sym = self._buffer.read(n_gi + 64)
+        sym = np.fft.fftshift(np.fft.fft(sym[n_gi:])) * self._h_est
 
         # Calculate the CPE (beta) using pilot symbols
         seq = self._pilot_seq[0] * np.array(self._pilot_polarity)
@@ -420,7 +423,7 @@ class ChannelEstimator:
         else:
             return sym[DATA_IND] * np.exp(1j * beta)
 
-    def switch_ht(self):
+    def switch_ht(self, signal: HTSignal):
         # Skip HT-STS
         self._buffer.advance(HT_STS_LEN)
         # Skip GI
@@ -431,6 +434,7 @@ class ChannelEstimator:
         self._h_est = HT_LTS_F / ht_lts_f
 
         self._ht = True
+        self._short_gi = signal.short_gi
 
     def _coarse_cfo_estimate(self):
         sts_seq_1 = self._buffer.window(1 * STS_LEN, 7 * STS_LEN)
@@ -516,7 +520,7 @@ class Decoder:
 
         try:
             signal = HTSignal(ht_signal_bits)
-            estimator.switch_ht()
+            estimator.switch_ht(signal)
         except Exception:
             # Not a 802.11n packets rollback
             self._buffer.advance(-160)

@@ -64,7 +64,7 @@ def hamming_distance(l1, l2):
 
 
 def soft_distance(code_bits, llrs):
-    return sum((-llr if b else llr) for b, llr in zip(code_bits, llrs))
+    return sum((llr if b else -llr) for b, llr in zip(code_bits, llrs))
 
 
 def power_detector(sig, window_len, threshoud):
@@ -331,7 +331,7 @@ class Demodulator:
                 bits.extend(self.bit_labels[idx])
             return bits
 
-        # Soft mode
+        # Approximate LLR Algorithm (https://www.mathworks.com/help/comm/ug/digital-baseband-modulation.html#bu_zzah-2)
         llrs: list[float] = []
         for sym in carriers:
             z = sym * self.scale
@@ -341,7 +341,7 @@ class Demodulator:
                 mask1 = ~mask0
                 d0 = float(np.min(d2[mask0]))
                 d1 = float(np.min(d2[mask1]))
-                llrs.append(d0 - d1)
+                llrs.append(d1 - d0)
         return llrs
 
 

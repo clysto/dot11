@@ -74,7 +74,7 @@ def test_continues_decode():
 
 HT_MCS_MIN_SNR = {
     0: 6,
-    1: 6,
+    1: 7,
     2: 9,
     3: 11,
     4: 15,

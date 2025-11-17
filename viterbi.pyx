@@ -37,7 +37,7 @@ def soft_distance(code_bits: BitList, llrs: List[float]) -> cython.double:
 
     for idx in range(limit):
         llr: cython.double = llrs[idx]
-        contrib: cython.double = -llr if code_bits[idx] else llr
+        contrib: cython.double = llr if code_bits[idx] else -llr
         dist += contrib
 
     return dist

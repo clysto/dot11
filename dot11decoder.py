@@ -3,7 +3,7 @@ from collections import deque
 
 import scipy.signal
 import numpy as np
-from viterbi import Viterbi as FastViterbi
+from viterbi import Viterbi
 
 FS = 20e6
 LTS_F = np.concat(
@@ -59,15 +59,6 @@ PILOT_SEQ = np.concat(
     ]
 )
 
-
-def hamming_distance(l1, l2):
-    return sum(1 for a, b in zip(l1, l2) if a != b and a != -1 and b != -1)
-
-
-def soft_distance(code_bits, llrs):
-    return sum((llr if b else -llr) for b, llr in zip(code_bits, llrs))
-
-
 def power_detector(sig, window_len, threshoud):
     sig = np.pad(sig, (window_len, 0), mode="symmetric")
     sig = np.abs(sig)
@@ -76,98 +67,6 @@ def power_detector(sig, window_len, threshoud):
     p = 10 * np.log10(b / a)
     idx, _ = scipy.signal.find_peaks(p, height=threshoud, width=window_len)
     return idx
-
-
-class Viterbi:
-    def __init__(self, constraint, polynomials, puncpat=None):
-        self._constraint = constraint
-        self._polynomials = polynomials
-        self._puncpat = puncpat
-        self._outputs = [[] for _ in range(1 << self._constraint)]
-        self._n_parity_bits = len(polynomials)
-
-        for i in range(1 << self._constraint):
-            for p in self._polynomials:
-                self._outputs[i].append(int.bit_count(i & p) % 2)
-
-    def _puncture(self, bits):
-        puncpat_len = len(self._puncpat)
-        return [bit for i, bit in enumerate(bits) if self._puncpat[i % puncpat_len]]
-
-    def _depuncture(self, bits, b_erase=-1):
-        depunctured = []
-        it = iter(bits)
-        while True:
-            for flag in self._puncpat:
-                if flag == 1:
-                    try:
-                        depunctured.append(next(it))
-                    except StopIteration:
-                        return depunctured
-                else:
-                    depunctured.append(b_erase)
-
-    def encode(self, bits):
-        output = []
-        state = 0
-        for b in bits:
-            state = (state >> 1) | b << (self._constraint - 1)
-            output.extend(self._outputs[state])
-
-        if self._puncpat is not None:
-            return self._puncture(output)
-        else:
-            return output
-
-    def decode(self, bits, soft=True):
-        b_erase = 0 if soft else -1
-
-        if self._puncpat is not None:
-            bits = self._depuncture(bits, b_erase)
-
-        trellis: list[list] = []
-        path_metrics = [0 if i == 0 else math.inf for i in range(1 << (self._constraint - 1))]
-
-        for i in range(math.ceil(len(bits) / self._n_parity_bits)):
-            trellis.append([])
-            cur_path_metrics = []
-
-            cur_bits = bits[i * self._n_parity_bits : (i + 1) * self._n_parity_bits]
-            if len(cur_bits) < self._n_parity_bits:
-                # pad erase bits
-                cur_bits += [b_erase] * (self._n_parity_bits - len(cur_bits))
-
-            for cur in range(1 << (self._constraint - 1)):
-                mask = (1 << (self._constraint - 1)) - 1
-
-                prev1 = (cur << 1) | 0
-                prev2 = (cur << 1) | 1
-
-                if soft:
-                    pm1 = soft_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
-                    pm2 = soft_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
-                else:
-                    pm1 = hamming_distance(self._outputs[prev1], cur_bits) + path_metrics[prev1 & mask]
-                    pm2 = hamming_distance(self._outputs[prev2], cur_bits) + path_metrics[prev2 & mask]
-
-                if pm1 < pm2:
-                    trellis[i].append(prev1 & mask)
-                    cur_path_metrics.append(pm1)
-                else:
-                    trellis[i].append(prev2 & mask)
-                    cur_path_metrics.append(pm2)
-
-            path_metrics = cur_path_metrics
-
-        # traceback
-        out = []
-        state = path_metrics.index(min(path_metrics))
-
-        for i in reversed(range(len(trellis))):
-            out.append(state >> (self._constraint - 2))
-            state = trellis[i][state]
-
-        return out[::-1]
 
 
 class LegacySignal:
@@ -503,7 +402,7 @@ class Decoder:
         # Decode one OFDM symbol for Legacy Signal
         demod = Demodulator(n_bpsc=1)
         deintl = Deinterleaver(n_bpsc=1, n_cbps=48)
-        dot11_codec = FastViterbi(7, [0o133, 0o171])
+        dot11_codec = Viterbi(7, [0o133, 0o171])
 
         signal_sym = estimator.next_symbol()
         signal_raw_bits = demod.demodulate(signal_sym, return_soft=soft)
@@ -537,7 +436,7 @@ class Decoder:
 
         demod = Demodulator(n_bpsc=n_bpsc)
         deintl = Deinterleaver(n_bpsc=n_bpsc, n_cbps=n_cbps, ht=signal.ht)
-        dot11_codec = FastViterbi(7, [0o133, 0o171], puncpat)
+        dot11_codec = Viterbi(7, [0o133, 0o171], puncpat)
 
         n_service = 16
         n_bytes = signal.length

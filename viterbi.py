@@ -1,8 +1,39 @@
+# pyright: reportInvalidTypeForm=false
 import math
 from collections.abc import Iterable, Sequence
 from typing import List, Optional
 
-import cython
+try:
+    import cython
+except ImportError:
+
+    class _CythonStub:
+        int = int
+        double = float
+        bint = bool
+        Py_ssize_t = int
+
+        @staticmethod
+        def cfunc(func):
+            return func
+
+        inline = cfunc
+
+        @staticmethod
+        def boundscheck(_):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        @staticmethod
+        def wraparound(_):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    cython = _CythonStub()
 
 BitList = List[int]
 Trellis = List[List[int]]
@@ -163,3 +194,6 @@ class Viterbi:
             state = trellis[i][state]
 
         return out[::-1]
+
+
+__all__ = ["Viterbi"]

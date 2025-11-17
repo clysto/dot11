@@ -42,5 +42,5 @@ for pkt_idx, psdu in enumerate(decoder.decode_next()):
 - Python 3.12+
 - `numpy`, `scipy`
 - Viterbi decoder:
-  - Fast path: Cython implementation in `viterbi.pyx`. Compile it once with `cythonize -i viterbi.pyx`, then the decoder will import the generated extension automatically.
-  - Pure Python fallback: a reference `Viterbi` class lives inside `dot11decoder.py`. If you do not want to build the Cython module, replace the import at the top of `dot11decoder.py` (`from viterbi import Viterbi as FastViterbi`) with `FastViterbi = Viterbi` so that the decoder uses the in-file implementation instead.
+  - The implementation lives in `viterbi.py`, which runs as plain Python out of the box.
+  - To enable the Cython speedups, install Cython and run `cythonize -i viterbi.py`. The pure-Python module and the compiled extension share the same source, so no code changes are required when switching between the two.

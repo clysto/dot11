@@ -44,8 +44,9 @@ def run_decoder(variant, mcs):
 @pytest.mark.parametrize("mcs", range(8), ids=lambda m: f"MCS{m}")
 @pytest.mark.parametrize("variant", ["a", "n"], ids=lambda x: "802.11a/g" if x == "a" else "802.11n")
 def test_decoder(variant, mcs):
-    psdu = run_decoder(variant, mcs)
-    assert not any(psdu)
+    result = run_decoder(variant, mcs)
+    assert not any(result.psdu)
+    assert result.mcs_index == mcs
 
 
 def test_continues_decode():
@@ -68,8 +69,8 @@ def test_continues_decode():
 
     decoder = Decoder(sig)
 
-    for psdu in decoder.decode_next():
-        assert not any(psdu)
+    for result in decoder.decode_next():
+        assert not any(result.psdu)
 
 
 HT_MCS_MIN_SNR = {
@@ -93,6 +94,6 @@ def test_decoder_minimum_snr_per_mcs(mcs):
     noisy_samples = awgn(samples, snr)
 
     decoder = Decoder(noisy_samples)
-    psdu = decoder.decode()
+    result = decoder.decode()
 
-    assert not any(psdu)
+    assert not any(result.psdu)

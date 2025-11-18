@@ -12,12 +12,23 @@ The main entry point is `dot11decoder.Decoder`, which consumes a `numpy.ndarray`
 ### `Decoder.decode`
 - Requires the internal buffer to already point to the legacy short training sequence.
 - Use this when the provided IQ slice is already aligned to the start of a frame or is only off by a few samples (for example when you trimmed the capture around a trigger).
-- Performs timing synchronization, channel estimation, and returns the decoded payload bytes as a `bytes` object.
+- Performs timing synchronization, channel estimation, and returns a `DecodeResult` with the PSDU plus modulation, CSI, CFO estimate, GI flag, and symbol count metadata.
 
 ### `Decoder.decode_next`
-- Runs the energy detector (`power_detector`) to locate each packet in a long capture, repositions the internal buffer, then calls `decode()` for you.
-- Use this when the capture contains many frames or unknown gaps: the energy detector is what finds the start of each frame, so `decode_next()` is required in that situation.
+- Runs the short-training-sequence detector to locate each packet in a long capture, repositions the internal buffer, then calls `decode()` for you.
+- Use this when the capture contains many frames or unknown gaps: the detector finds the start of each frame, so `decode_next()` is required in that situation.
 - If your IQ samples are already aligned (or nearly aligned) to a single frame, `decode()` is both simpler and faster, so skip `decode_next()` in that case.
+
+### `DecodeResult`
+The object returned by either API exposes:
+- `psdu`: payload bytes.
+- `modulation`: one of `BPSK`, `QPSK`, `16-QAM`, `64-QAM`, derived from the selected MCS.
+- `mcs_index`: integer value decoded from the SIGNAL/HT-SIG MCS bits (legacy indexes 0–7, HT indexes 0–7).
+- `ht`: `True` for HT packets, `False` for legacy 11a/g.
+- `short_gi`: whether the HT-SIG indicated short guard interval (legacy frames always `False`).
+- `n_data_symbols`, `rate_mbps`, `length_bytes`: framing stats straight from the signal field.
+- `csi`: complex64 array with the per-subcarrier channel estimate.
+- `freq_offset_hz`: combined coarse/fine CFO estimate applied during equalization.
 
 ## Example
 ```python
@@ -30,12 +41,18 @@ samples = np.fromfile("capture.cf32", dtype=np.complex64)
 decoder = Decoder(samples)
 
 # Option A: already-aligned frame, just decode once
-psdu = decoder.decode()
-print("Single frame:", psdu)
+result = decoder.decode()
+print(
+    "Single frame:",
+    result.psdu,
+    result.modulation,
+    f"{result.rate_mbps:.1f} Mbps",
+    f"CFO {result.freq_offset_hz:.0f} Hz",
+)
 
 # Option B: long capture with many packets, iterate over detections
-for pkt_idx, psdu in enumerate(decoder.decode_next()):
-    print(f"Frame {pkt_idx}: {psdu[:16]!r} ...")
+for pkt_idx, result in enumerate(decoder.decode_next()):
+    print(f"Frame {pkt_idx}: {result.psdu[:16]!r} shortGI={result.short_gi} ht={result.ht}")
 ```
 
 ## Requirements

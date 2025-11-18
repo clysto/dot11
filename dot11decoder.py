@@ -1,5 +1,6 @@
 import math
 from collections import deque
+from dataclasses import dataclass
 
 import scipy.signal
 import numpy as np
@@ -169,6 +170,34 @@ class HTSignal:
             raise ValueError("HT-SIG tail bits must be all zeros.")
 
 
+@dataclass
+class DecodeResult:
+    psdu: bytes
+    csi: np.ndarray
+    modulation: str
+    short_gi: bool
+    n_data_symbols: int
+    rate_mbps: float
+    length_bytes: int
+    ht: bool
+    mcs_index: int
+    freq_offset_hz: float
+
+
+def _modulation_from_bpsc(n_bpsc: int) -> str:
+    match n_bpsc:
+        case 1:
+            return "BPSK"
+        case 2:
+            return "QPSK"
+        case 4:
+            return "16-QAM"
+        case 6:
+            return "64-QAM"
+        case _:
+            raise ValueError(f"Unsupported bits-per-subcarrier value: {n_bpsc}")
+
+
 class Demodulator:
     QAM16_MAPPING = {
         0b00: -3,
@@ -275,10 +304,12 @@ class ChannelEstimator:
         self._pilot_polarity = deque([1, 1, 1, -1])
         self._ht = False
         self._short_gi = False
+        self._freq_offset_hz = 0.0
 
         # Estimate CFO using STS
         coarse_cfo_est = self._coarse_cfo_estimate()
         self._buffer.freq_compensation(coarse_cfo_est)
+        self._freq_offset_hz = coarse_cfo_est
 
         # Skip 10xSTS
         self._buffer.advance(STS_LEN * 10)
@@ -288,6 +319,7 @@ class ChannelEstimator:
         # Estimate CFO using LTS
         fine_cfo_est = self._fine_cfo_estimate()
         self._buffer.freq_compensation(fine_cfo_est)
+        self._freq_offset_hz += fine_cfo_est
 
         # LTS1
         lts1 = self._buffer.read(LTS_LEN)
@@ -463,7 +495,23 @@ class Decoder:
         data_bits = self.descramble(data_bits)
         data_bytes = np.packbits(data_bits[n_service:], bitorder="little")[:n_bytes].tobytes()
 
-        return data_bytes
+        short_gi = getattr(signal, "short_gi", False)
+        symbol_duration = 3.6e-6 if signal.ht and short_gi else 4e-6
+        mcs_parameters = HTSignal.HT_MCS_PARAMETERS if signal.ht else LegacySignal.LT_MCS_PARAMETERS
+        mcs_index = list(mcs_parameters.keys()).index(signal.mcs_bits)
+
+        return DecodeResult(
+            psdu=data_bytes,
+            csi=np.copy(estimator._h_est),
+            modulation=_modulation_from_bpsc(n_bpsc),
+            short_gi=short_gi,
+            n_data_symbols=n_sym,
+            rate_mbps=(n_dbps / symbol_duration) / 1e6,
+            length_bytes=n_bytes,
+            ht=signal.ht,
+            mcs_index=mcs_index,
+            freq_offset_hz=estimator._freq_offset_hz,
+        )
 
 
 class Deinterleaver:

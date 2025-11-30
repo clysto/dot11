@@ -16,7 +16,7 @@ def awgn(samples, snr):
 
 def channel(sig, time_offset, theta, snr, freq_offset):
     # add time offset
-    samples = np.concat((np.zeros(time_offset, dtype=np.complex64), sig))
+    samples = np.concatenate((np.zeros(time_offset, dtype=np.complex64), sig))
     # add phase rotation
     samples *= np.exp(1j * theta)
     # add noise
@@ -52,7 +52,7 @@ def test_decoder(variant, mcs):
 def test_continues_decode():
     mat = scipy.io.loadmat("data/80211n-mcs0.mat", squeeze_me=True)
     samples = mat["waveStruct"]["waveform"].item().astype(np.complex64)
-    sig = np.concat(
+    sig = np.concatenate(
         (
             np.zeros(3000, dtype=np.complex64),
             samples,
